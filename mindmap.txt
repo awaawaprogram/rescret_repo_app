@@ -1,0 +1,51 @@
+1. lambda_handler
+   └─ validate_type
+   └─ validate_signature
+   ├─ reset
+   │   └─ archive_conversation
+   ├─ store_prompt
+   │   └─ update_prompt_count
+   ├─ send_upgrade_link
+   ├─ populate_conversation
+   ├─ openai_completions
+   ├─ format_openai_response
+   ├─ get_openai_cost_jpy
+   ├─ can_use_more_tokens
+   ├─ store_conversation
+   ├─ update_tokens_used
+   ├─ update_message_count
+   └─ line_reply
+2. Database Access (DynamoDB)
+   ├─ CHAT_HISTORY_TABLE
+   │   ├─ store_conversation
+   │   ├─ archive_conversation
+   │   └─ populate_conversation
+   ├─ USER_DATA_TABLE
+   │   ├─ lambda_handler
+   │   ├─ update_tokens_used
+   │   ├─ update_message_count
+   │   └─ can_use_more_tokens
+   └─ PROMPT_HISTORY_TABLE
+       ├─ store_prompt
+       └─ populate_conversation
+
+
+┌────────────────────┐       ┌───────────────────┐       ┌─────────────────────┐
+│  CHAT_HISTORY_TABLE  │       │ USER_DATA_TABLE   │       │ PROMPT_HISTORY_TABLE │
+├────────────────────┤  
+│ user_id (PK)        │ 
+│ conversation        │ 
+│ token_count         │ 
+│ message_count       │ 
+└────────────────────┘  
+
+
+┌──────────────────────┐       ┌───────────────────┐       ┌──────────────────────┐       ┌──────────────────────┐
+│  CHAT_HISTORY_TABLE  │       │ USER_DATA_TABLE   │       │ PROMPT_HISTORY_TABLE │       │ CHAT_ARCHIVE_TABLE   │
+├──────────────────────┤       ├───────────────────┤       ├──────────────────────┤       ├──────────────────────┤
+│ user_id (PK)         │       │ user_id (PK)      │       │ user_id (PK)         │       │ user_id (PK)         │
+│ conversation         │       │ tokens_used       │       │ prompt_id (SK)       │       │ prompt_id (SK)       │
+│ token_count          │       │ message_count     │       │ prompt               │       │ prompt               │
+│ message_count        │       │ plan_id           │       └──────────────────────┘       └──────────────────────┘
+└──────────────────────┘       │ prompt_count      │
+                               └───────────────────┘
