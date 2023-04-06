@@ -1,9 +1,27 @@
+import base64
+import hashlib
+import hmac
 import json
+import requests
 import boto3
+import os
+import time
 from datetime import datetime
 
-dynamodb = boto3.resource('dynamodb')
-table_name = 'PROMPT_ARCHIVE_TABLE'
+
+LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+OPENAI_COMPLETIONS_ENDPOINT = os.getenv('OPENAI_COMPLETIONS_ENDPOINT')
+LINE_REPLY_ENDPOINT = os.getenv('LINE_REPLY_ENDPOINT')
+
+CHAT_HISTORY_TABLE = 'chat_history'
+USER_DATA_TABLE = 'user_data'
+CHAT_ARCHIVE_TABLE = 'chat_archive'
+PROMPT_ARCHIVE_TABLE = 'prompt_archive'
+
+dynamodb = boto3.client('dynamodb', region_name='ap-southeast-2')
+table_name = PROMPT_ARCHIVE_TABLE
 prompt_table = dynamodb.Table(table_name)
 
 def lambda_handler(event, context):
