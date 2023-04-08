@@ -1,12 +1,7 @@
-import base64
-import hashlib
-import hmac
-import json
-import requests
-import boto3
 import os
-import time
-from datetime import datetime
+import json
+import boto3
+import requests
 
 
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
@@ -15,137 +10,174 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 OPENAI_COMPLETIONS_ENDPOINT = os.getenv('OPENAI_COMPLETIONS_ENDPOINT')
 LINE_REPLY_ENDPOINT = os.getenv('LINE_REPLY_ENDPOINT')
 
+STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')
+PLAN_580_JPY = os.getenv('PLAN_580_JPY')
+PLAN_1080_JPY = os.getenv('PLAN_1080_JPY')
+
 CHAT_HISTORY_TABLE = 'chat_history'
 USER_DATA_TABLE = 'user_data'
 CHAT_ARCHIVE_TABLE = 'chat_archive'
 PROMPT_ARCHIVE_TABLE = 'prompt_archive'
 
-dynamodb = boto3.client('dynamodb', region_name='ap-southeast-2')
-table_name = PROMPT_ARCHIVE_TABLE
-prompt_table = dynamodb.Table(table_name)
 
-def lambda_handler(event, context):
-    # LINEから送信された情報を取得
-    body = json.loads(event['body'])
-    user_id = body['events'][0]['source']['userId']
-    text = body['events'][0]['message']['text']
+dynamodb = boto3.resource('dynamodb')
 
-    # DynamoDBに保存するデータを作成
-    now = datetime.now()
-    datetime_str = now.strftime("%Y-%m-%d %H:%M:%S")
-    item = {
-        'user_id': user_id,
-        'datetime': datetime_str,
-        'prompt': text
-    }
-    
-    # DynamoDBにデータを保存
-    prompt_table.put_item(Item=item)
-    
-    # DynamoDBから最新のデータを取得
-    response = prompt_table.query(
-        KeyConditionExpression='user_id = :uid',
-        ExpressionAttributeValues={
-            ':uid': user_id
-        },
-        Limit=1,
-        ScanIndexForward=False
-    )
-    
-    # フォームに表示するテキストを取得
-    prompt = ""
-    if len(response['Items']) > 0:
-        prompt = response['Items'][0]['prompt']
+PROMPT_ARCHIVE_TABLE = dynamodb.Table(PROMPT_ARCHIVE_TABLE)
+USER_DATA_TABLE = dynamodb.Table(USER_DATA_TABLE)
 
-    # 丸いボタンを含むFlex Messageを作成
-    flex_message = {
-        "type": "flex",
-        "altText": "Prompt Form",
-        "contents": {
-            "type": "bubble",
-            "hero": {
-                "type": "image",
-                "url": "https://example.com/images/boticon.png",
-                "size": "full",
-                "aspectRatio": "1:1",
-                "aspectMode": "cover"
-            },
-            "body": {
-                "type": "box",
-                "layout": "vertical",
-                "contents": [
-                    {
-                        "type": "text",
-                        "text": "Please enter your prompt:",
-                        "weight": "bold",
-                        "size": "lg",
-                        "margin": "none",
-                        "align": "center"
-                    },
-                    {
-                        "type": "box",
-                        "layout": "vertical",
-                        "margin": "md",
-                        "spacing": "sm",
-                        "contents": [
-                            {
-                                "type": "text",
-                                "text": "Prompt",
-                                "size": "md",
-                                "color": "#999999"
-                            },
-                            {
-                                "type": "text",
-                                "text": prompt,
-                                "size": "lg",
-                                "wrap": True,
-                                "action": {
-                                    "type": "message",
-                                    "label": "Prompt",
-                                    "text": "{{text}}"
-                                }
-                            },
-                            {
-                                "type": "separator"
-                            }
-                        ]
-                    },
-                    {
-                        "type": "box",
-                        "layout": "horizontal",
-                        "margin": "md",
-                        "spacing": "sm",
-                        "contents": [
-                            {
-                                "type": "button",
-                                "action": {
-                                "type": "message",
-                                "label": "Save",
-                                "text": "{{text}}"
-                            },
-                            "color": "#00bfff",
-                            "style": "primary"
-                            }
-                        ]
-                    }
-                ]
-            }
-        }
-    }
 
-    # Flex Messageを含むレスポンスを作成
-    response_data = {
-        'replyToken': body['events'][0]['replyToken'],
-        'messages': [flex_message]
-    }
-
-    # LINEにレスポンスを返す
+def send_reply_message(reply_token, messages):
     headers = {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + 'LINE_CHANNEL_ACCESS_TOKEN'
+        'Authorization': f'Bearer {LINE_CHANNEL_ACCESS_TOKEN}'
     }
-    response = requests.post('https://api.line.me/v2/bot/message/reply', headers=headers, data=json.dumps(response_data))
-    return {
-        'statusCode': response.status_code,
-        'body': response.text
+
+    data = {
+        'replyToken': reply_token,
+        'messages': messages
     }
+    try:
+        response = requests.post(LINE_REPLY_ENDPOINT, headers=headers, json=data)
+        response.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        print(f"Request Headers: {headers}")
+        print(f"Request Data: {data}")
+        print(f"Response Status Code: {response.status_code}")
+        print(f"Response Text: {response.text}")
+        raise e
+
+def handle_message(body, event):
+    body_json = json.loads(body)
+    if 'events' not in body_json:
+        print('events is not in body_json')
+        return
+    print(len(body_json['events']))
+    print(body_json['events'])
+    for e in body_json['events']:
+        if e['type'] == 'message' and e['message']['type'] == 'text':
+            user_id = e['source']['userId']
+            reply_token = e['replyToken']
+            if e['message']['text'] == '文章を入力':
+                print('send input form')
+                send_input_form(user_id, reply_token)
+            elif e['message']['text'].startswith('文章を送信: '):
+                prompt = e['message']['text'][9:]
+                save_prompt(user_id, prompt, reply_token)
+
+
+def send_input_form(user_id, reply_token):
+    try:
+        saved_prompt = get_saved_prompt(user_id)
+    except:
+        saved_prompt = ''
+
+    if not saved_prompt:
+        saved_prompt = 'ここに入力してください'
+
+    send_reply_message(
+        reply_token,
+        [
+            {
+                "type": "text",
+                "text": "文章を入力してください。"
+            },
+            {
+                "type": "text",
+                "text": saved_prompt,
+                "quickReply": {
+                    "items": [
+                        {
+                            "type": "action",
+                            "action": {
+                                "type": "message",
+                                "label": "文章を送信",
+                                "text": "文章を送信"
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    )
+
+
+    send_reply_message(
+        reply_token,
+        [{
+            'type': 'flex',
+            'altText': '入力フォーム',
+            'contents': flex_message
+        }]
+    )
+
+
+
+def get_saved_prompt(user_id):
+    response = USER_DATA_TABLE.get_item(
+        Key={
+            'user_id': user_id
+        }
+    )
+
+    if 'Item' in response:
+        return response['Item'].get('prompt', '')
+    else:
+        return ''
+
+
+def handle_postback(body, event):
+    body_json = json.loads(body)
+    if 'events' not in body_json:
+        return
+
+    for e in body_json['events']:
+        if e['type'] == 'postback' and e['postback']['data'] == 'action=submit_prompt':
+            user_id = e['source']['userId']
+            reply_token = e['replyToken']
+            prompt = e['postback']['params']['text']
+            save_prompt(user_id, prompt, reply_token)
+
+
+
+def save_prompt(user_id, prompt, reply_token):
+    timestamp = datetime.datetime.now()
+
+    PROMPT_ARCHIVE_TABLE.put_item(
+        Item={
+            'user_id': user_id,
+            'datetime': timestamp.isoformat(),
+            'prompt': prompt
+        }
+    )
+
+    USER_DATA_TABLE.update_item(
+        Key={
+            'user_id': user_id
+        },
+        UpdateExpression='SET prompt = :prompt, last_updated = :last_updated',
+        ExpressionAttributeValues={
+            ':prompt': prompt,
+            ':last_updated': timestamp.isoformat()
+        }
+    )
+
+    send_reply_message(
+        reply_token,
+        [{
+            'type': 'text',
+            'text': '文章が保存されました'
+        }]
+    )
+
+
+
+def lambda_handler(event, context):
+    body = event['body']
+    try:
+        handle_message(body, event)
+        handle_postback(body, event)
+    except Exception as e:
+        print(f"Error: {e}")
+        return {'statusCode': 400, 'body': 'Error'}
+    
+    return {'statusCode': 200, 'body': 'OK'}

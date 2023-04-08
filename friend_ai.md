@@ -27,7 +27,7 @@ erDiagram
 erDiagram
     PROMPT_ARCHIVE_TABLE {
         string user_id "PK"
-        datetime datetime "SK"
+        string datetime "SK"
         string prompt
     }
 
