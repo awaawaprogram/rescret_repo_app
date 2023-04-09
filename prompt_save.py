@@ -21,7 +21,7 @@ CHAT_ARCHIVE_TABLE_NAME = 'chat_archive'
 PROMPT_ARCHIVE_TABLE_NAME = 'prompt_archive'
 
 
-AWS_REGION = 'ap-southeast-2'  # 環境変数からリージョンを取得
+AWS_REGION = os.getenv('AWS_DB_REGION')  # 環境変数からリージョンを取得
 dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
 
 PROMPT_ARCHIVE_TABLE = dynamodb.Table(PROMPT_ARCHIVE_TABLE_NAME)
@@ -55,16 +55,54 @@ def handle_message(body, event):
         return
     print(len(body_json['events']))
     print(body_json['events'])
+
     for e in body_json['events']:
         if e['type'] == 'message' and e['message']['type'] == 'text':
             user_id = e['source']['userId']
             reply_token = e['replyToken']
             if e['message']['text'] == 'system:prompt':
                 request_prompt(reply_token)
+                set_prompt_expected(user_id, True)
             else:
-                save_prompt(user_id, e['message']['text'], reply_token)
+                prompt_expected = is_prompt_expected(user_id)
+                if prompt_expected:
+                    save_prompt(user_id, e['message']['text'], reply_token)
+                    set_prompt_expected(user_id, False)
+                else:
+                    send_reply_message(
+                        reply_token,
+                        [{
+                            'type': 'text',
+                            'text': e['message']['text']
+                        }]
+                    )
 
 
+def is_prompt_expected(user_id):
+    response = USER_DATA_TABLE.get_item(
+        Key={
+            'user_id': user_id
+        }
+    )
+
+    if 'Item' in response:
+        return response['Item'].get('prompt_expected', False)
+    else:
+        return False
+
+
+def set_prompt_expected(user_id, prompt_expected):
+    timestamp = datetime.datetime.now()
+    USER_DATA_TABLE.update_item(
+        Key={
+            'user_id': user_id
+        },
+        UpdateExpression='SET prompt_expected = :prompt_expected, last_updated = :last_updated',
+        ExpressionAttributeValues={
+            ':prompt_expected': prompt_expected,
+            ':last_updated': timestamp.isoformat()
+        }
+    )
 
 def request_prompt(reply_token):
     send_reply_message(
