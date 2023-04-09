@@ -2,6 +2,7 @@ import os
 import json
 import boto3
 import requests
+import datetime
 
 
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
@@ -14,16 +15,17 @@ STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')
 PLAN_580_JPY = os.getenv('PLAN_580_JPY')
 PLAN_1080_JPY = os.getenv('PLAN_1080_JPY')
 
-CHAT_HISTORY_TABLE = 'chat_history'
-USER_DATA_TABLE = 'user_data'
-CHAT_ARCHIVE_TABLE = 'chat_archive'
-PROMPT_ARCHIVE_TABLE = 'prompt_archive'
+CHAT_HISTORY_TABLE_NAME = 'chat_history'
+USER_DATA_TABLE_NAME = 'user_data'
+CHAT_ARCHIVE_TABLE_NAME = 'chat_archive'
+PROMPT_ARCHIVE_TABLE_NAME = 'prompt_archive'
 
 
-dynamodb = boto3.resource('dynamodb')
+AWS_REGION = 'ap-southeast-2'  # 環境変数からリージョンを取得
+dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
 
-PROMPT_ARCHIVE_TABLE = dynamodb.Table(PROMPT_ARCHIVE_TABLE)
-USER_DATA_TABLE = dynamodb.Table(USER_DATA_TABLE)
+PROMPT_ARCHIVE_TABLE = dynamodb.Table(PROMPT_ARCHIVE_TABLE_NAME)
+USER_DATA_TABLE = dynamodb.Table(USER_DATA_TABLE_NAME)
 
 
 def send_reply_message(reply_token, messages):
@@ -57,13 +59,21 @@ def handle_message(body, event):
         if e['type'] == 'message' and e['message']['type'] == 'text':
             user_id = e['source']['userId']
             reply_token = e['replyToken']
-            if e['message']['text'] == '文章を入力':
-                print('send input form')
-                send_input_form(user_id, reply_token)
-            elif e['message']['text'].startswith('文章を送信: '):
-                prompt = e['message']['text'][9:]
-                save_prompt(user_id, prompt, reply_token)
+            if e['message']['text'] == 'system:prompt':
+                request_prompt(reply_token)
+            else:
+                save_prompt(user_id, e['message']['text'], reply_token)
 
+
+
+def request_prompt(reply_token):
+    send_reply_message(
+        reply_token,
+        [{
+            'type': 'text',
+            'text': 'プロンプトを入力してください。'
+        }]
+    )
 
 def send_input_form(user_id, reply_token):
     try:
@@ -142,32 +152,47 @@ def handle_postback(body, event):
 def save_prompt(user_id, prompt, reply_token):
     timestamp = datetime.datetime.now()
 
-    PROMPT_ARCHIVE_TABLE.put_item(
-        Item={
-            'user_id': user_id,
-            'datetime': timestamp.isoformat(),
-            'prompt': prompt
-        }
-    )
+    try:
+        print("Attempting to put item in PROMPT_ARCHIVE_TABLE")
+        PROMPT_ARCHIVE_TABLE.put_item(
+            Item={
+                'user_id': user_id,
+                'datetime': timestamp.isoformat(),
+                'prompt': prompt
+            }
+        )
+        print("Item put in PROMPT_ARCHIVE_TABLE successfully")
 
-    USER_DATA_TABLE.update_item(
-        Key={
-            'user_id': user_id
-        },
-        UpdateExpression='SET prompt = :prompt, last_updated = :last_updated',
-        ExpressionAttributeValues={
-            ':prompt': prompt,
-            ':last_updated': timestamp.isoformat()
-        }
-    )
+        print("Attempting to update item in USER_DATA_TABLE")
+        USER_DATA_TABLE.update_item(
+            Key={
+                'user_id': user_id
+            },
+            UpdateExpression='SET prompt = :prompt, last_updated = :last_updated',
+            ExpressionAttributeValues={
+                ':prompt': prompt,
+                ':last_updated': timestamp.isoformat()
+            }
+        )
+        print("Item updated in USER_DATA_TABLE successfully")
 
-    send_reply_message(
-        reply_token,
-        [{
-            'type': 'text',
-            'text': '文章が保存されました'
-        }]
-    )
+        send_reply_message(
+            reply_token,
+            [{
+                'type': 'text',
+                'text': '保存が成功しました。'
+            }]
+        )
+    except Exception as e:
+        print(f"Error: {e}")
+        send_reply_message(
+            reply_token,
+            [{
+                'type': 'text',
+                'text': '保存が失敗しました。'
+            }]
+        )
+
 
 
 
@@ -179,5 +204,5 @@ def lambda_handler(event, context):
     except Exception as e:
         print(f"Error: {e}")
         return {'statusCode': 400, 'body': 'Error'}
-    
+
     return {'statusCode': 200, 'body': 'OK'}
