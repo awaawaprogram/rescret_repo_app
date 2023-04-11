@@ -17,12 +17,14 @@ STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')
 PLAN_580_JPY = os.getenv('PLAN_580_JPY')
 PLAN_1080_JPY = os.getenv('PLAN_1080_JPY')
 
-CHAT_HISTORY_TABLE = 'chat_history'
-USER_DATA_TABLE = 'user_data'
-CHAT_ARCHIVE_TABLE = 'chat_archive'
-PROMPT_ARCHIVE_TABLE = 'prompt_archive'
+CHAT_HISTORY_TABLE_NAME = 'chat_history'
+USER_DATA_TABLE_NAME = 'user_data'
+CHAT_ARCHIVE_TABLE_NAME = 'chat_archive'
+PROMPT_ARCHIVE_TABLE_NAME = 'prompt_archive'
 
-dynamo = boto3.client('dynamodb', region_name='ap-southeast-2')
+
+AWS_REGION = os.getenv('AWS_DB_REGION')  # 環境変数からリージョンを取得
+dynamo = boto3.resource('dynamodb', region_name=AWS_REGION)
 
 # ----- Validation Functions -----
 
@@ -45,7 +47,7 @@ def populate_conversation(user_id, message, user_data):
     try:
         # Get conversation history
         convo_list = dynamo.scan(
-            TableName=CHAT_HISTORY_TABLE,
+            TableName=CHAT_HISTORY_TABLE_NAME,
             FilterExpression="user_id = :user_id",
             ExpressionAttributeValues={":user_id": {"S": user_id}}
         )["Items"]
@@ -127,7 +129,7 @@ def store_conversation(user_id, query, openai_response):
     token_count = sum(len(msg["content"]) for msg in conversation)
     message_count = len(conversation) // 2
     dynamo.put_item(
-        TableName=CHAT_HISTORY_TABLE,
+        TableName=CHAT_HISTORY_TABLE_NAME,
         Item={
             'user_id': {
                 'S': user_id,
@@ -182,7 +184,7 @@ def line_reply(reply_token, response, cost_jpy):
 def archive_conversation(user_id):
     try:
         history = dynamo.get_item(
-            TableName=CHAT_HISTORY_TABLE,
+            TableName=CHAT_HISTORY_TABLE_NAME,
             Key={
                 'user_id': {
                     'S': user_id,
@@ -191,7 +193,7 @@ def archive_conversation(user_id):
         ).get('Item').get('conversation').get('S')
 
         dynamo.put_item(
-            TableName=CHAT_HISTORY_TABLE,
+            TableName=CHAT_HISTORY_TABLE_NAME,
             Item={
                 'user_id': {
                     'S': user_id + "-" + str(int(time.time())),
@@ -205,7 +207,7 @@ def archive_conversation(user_id):
         print('failed to archive conversation: {}'.format(e))
 
     dynamo.delete_item(
-        TableName=CHAT_HISTORY_TABLE,
+        TableName=CHAT_HISTORY_TABLE_NAME,
         Key={
             'user_id': {
                 'S': user_id,
@@ -270,7 +272,7 @@ def can_use_more_tokens(cost_jpy, user_data):
 
 def update_tokens_used(user_id, cost_jpy):
     dynamo.update_item(
-        TableName=USER_DATA_TABLE,
+        TableName=USER_DATA_TABLE_NAME,
         Key={
             'user_id': {
                 'S': user_id,
@@ -287,7 +289,7 @@ def update_tokens_used(user_id, cost_jpy):
 
 def update_message_count(user_id):
     dynamo.update_item(
-        TableName=USER_DATA_TABLE,
+        TableName=USER_DATA_TABLE_NAME,
         Key={
             'user_id': {
                 'S': user_id,
@@ -307,7 +309,7 @@ PROMPT_HISTORY_TABLE = 'prompt_history'
 def store_prompt(user_id, prompt_text):
     try:
         user_data = dynamo.get_item(
-            TableName=USER_DATA_TABLE,
+            TableName=USER_DATA_TABLE_NAME,
             Key={
                 'user_id': {
                     'S': user_id,
@@ -336,7 +338,7 @@ def store_prompt(user_id, prompt_text):
 
 def update_prompt_count(user_id):
     dynamo.update_item(
-        TableName=USER_DATA_TABLE,
+        TableName=USER_DATA_TABLE_NAME,
         Key={
             'user_id': {
                 'S': user_id,
@@ -369,7 +371,7 @@ def lambda_handler(event, context):
         }
 
     user_data = dynamo.get_item(
-        TableName=USER_DATA_TABLE,
+        TableName=USER_DATA_TABLE_NAME,
         Key={
             'user_id': {
                 'S': user_id,

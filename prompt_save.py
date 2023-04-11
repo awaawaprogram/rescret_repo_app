@@ -28,6 +28,7 @@ PROMPT_ARCHIVE_TABLE = dynamodb.Table(PROMPT_ARCHIVE_TABLE_NAME)
 USER_DATA_TABLE = dynamodb.Table(USER_DATA_TABLE_NAME)
 
 
+
 def send_reply_message(reply_token, messages):
     headers = {
         'Content-Type': 'application/json',
@@ -113,78 +114,6 @@ def request_prompt(reply_token):
         }]
     )
 
-def send_input_form(user_id, reply_token):
-    try:
-        saved_prompt = get_saved_prompt(user_id)
-    except:
-        saved_prompt = ''
-
-    if not saved_prompt:
-        saved_prompt = 'ここに入力してください'
-
-    send_reply_message(
-        reply_token,
-        [
-            {
-                "type": "text",
-                "text": "文章を入力してください。"
-            },
-            {
-                "type": "text",
-                "text": saved_prompt,
-                "quickReply": {
-                    "items": [
-                        {
-                            "type": "action",
-                            "action": {
-                                "type": "message",
-                                "label": "文章を送信",
-                                "text": "文章を送信"
-                            }
-                        }
-                    ]
-                }
-            }
-        ]
-    )
-
-
-    send_reply_message(
-        reply_token,
-        [{
-            'type': 'flex',
-            'altText': '入力フォーム',
-            'contents': flex_message
-        }]
-    )
-
-
-
-def get_saved_prompt(user_id):
-    response = USER_DATA_TABLE.get_item(
-        Key={
-            'user_id': user_id
-        }
-    )
-
-    if 'Item' in response:
-        return response['Item'].get('prompt', '')
-    else:
-        return ''
-
-
-def handle_postback(body, event):
-    body_json = json.loads(body)
-    if 'events' not in body_json:
-        return
-
-    for e in body_json['events']:
-        if e['type'] == 'postback' and e['postback']['data'] == 'action=submit_prompt':
-            user_id = e['source']['userId']
-            reply_token = e['replyToken']
-            prompt = e['postback']['params']['text']
-            save_prompt(user_id, prompt, reply_token)
-
 
 
 def save_prompt(user_id, prompt, reply_token):
@@ -233,12 +162,10 @@ def save_prompt(user_id, prompt, reply_token):
 
 
 
-
 def lambda_handler(event, context):
     body = event['body']
     try:
         handle_message(body, event)
-        handle_postback(body, event)
     except Exception as e:
         print(f"Error: {e}")
         return {'statusCode': 400, 'body': 'Error'}

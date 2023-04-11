@@ -53,6 +53,8 @@ def populate_conversation(user_id, message):
     print('generate_query - done: {}'.format(query))
     return query
 
+
+
 def openai_completions(prompt):
     print('openai_completions')
     
@@ -194,6 +196,7 @@ def lambda_handler(event, context):
     try:
         query = populate_conversation(user_id, message)
         openai_response = openai_completions(query)
+        print(openai_response)
         response = format_openai_response(openai_response)
         cost_jpy = get_openai_cost_jpy(openai_response)
         store_conversation(user_id, query, openai_response)
